@@ -1,0 +1,141 @@
+#Comprobamos el directorio donde estamos trabajando y creamos una carpeta para el analisis si no existe ya
+getwd()
+setwd("C:/Users/Incliva/Documents/Maria")
+mainDir <- "C:/Users/Incliva/Documents/Maria"
+subDir <- "ClariomD_analysis"
+if(dir.exists(file.path(mainDir, subDir))){
+  print("La carpeta ya existe")
+ }else{
+  dir.create(file.path(mainDir, subDir))
+  }
+setwd(file.path(mainDir, subDir))
+phedata<- read.table(file.path(mainDir,subDir,"phenodata_ClariomD_Affy_BCVY.txt"), dec=",",header=T,sep="\t",stringsAsFactors = T)
+#Quitamos las 3 primeras muestras que NO estan en el chip
+phedata<-phedata[-c(1,2,3),]
+
+#Instalamos los paquetes de R con las librerias necesarias para el analisis
+
+source("https://bioconductor.org/biocLite.R")
+biocLite("affy")
+biocLite("oligo")
+biocLite("limma")
+biocLite("pd.clariom.d.human")
+biocLite("clariomdhumanprobeset.db")
+
+#Cargamos las librerias dque necesitamos
+library(affy)
+library(oligo)
+library(limma)
+#Cargamos la información contenida en el chip (environment)
+library(pd.clariom.d.human)
+
+#Definimos la carpeta donde están los archivos *.cel que queremos cargar
+setwd(file.path(mainDir,subDir,list.files(pattern="Affy-BCVY")))
+
+#Leemos los nombres de los archivos que vamos a cargar
+celnames<-list.celfiles()
+#list.celfiles() hace lo mismo que la funcion list.files(pattern=".CEL")
+#celnames<-list.files(pattern = ".CEL")
+
+rownames(phedata)<-celnames
+sample_n<-as.character(phedata[,1])
+#Cargamos loss archivos *.CEL y la información del chip (environment)
+mat<-read.celfiles(list.celfiles())
+
+#Para ver la estructura de un clase formal se usa la función str() los raw data estan en assayData
+str(mat)
+
+#Normalizar los datos mediante el metodo RMA (Robust Multi-array Average)
+eset <-rma(mat)
+str(eset)
+
+#Guardamos el ExpressionSet
+setwd(file.path(mainDir,subDir))
+write.exprs(eset,"clariomD_norm_matrix.txt")
+
+#Eliminamos los archivos que ya no necesitamos
+#rm(list= setdiff(ls(), c("exp_mat", "x", "k")))
+#Para eliminar todos los archivos rm(list=ls())
+#Para vaciar la memoria en uso gc()
+
+exp_mat<-read.table("clariomD_norm_matrix.txt")
+
+#Cargamos la librería de la base de datos de anotación del chip ClariomD
+library(clariomdhumanprobeset.db)
+#Todo esto es inútil
+#x <- clariomdhumanprobesetALIAS2PROBE
+#mapped_probes <- mappedkeys(x)
+#xx <- as.list(clariomdhumanprobesetALIAS2PROBE)
+#columns(clariomdhumanprobeset.db)
+#x<-clariomdhumanprobesetPROBE2ALIAS
+
+#Buscar info sobre AnnotationDbi (comandos para navegar en las bases de datos en R)
+key_names<-columns(clariomdhumanprobeset.db)
+key_names
+k<-keys(clariomdhumanprobeset.db,keytype="PROBEID")
+x<-select(clariomdhumanprobeset.db,keys=k, columns=c("SYMBOL"), keytype="PROBEID")
+head(x)
+
+#Cargamos el archivo *.csv que nos bajamos de Affymetrix con la Anotacion de las sondas del chip ClariomD
+#disponible en https://www.thermofisher.com/order/catalog/product/902923
+#Cuando cargamos archivos muy grandes es conveniente hacer un intento limitando el numero de filas que leemos (argumento: nrow = 1000) para ver la distribucion de las columnas, las clases y como podemos hacer su lectura mas eficiente
+#p<-read.table("Clariom_D_Human.na36.hg38.probeset.csv",header=T, sep=",",quote="\"", check.names = T, stringsAsFactors = F, fill = T)
+pt<-read.table("Clariom_D_Human.na36.hg38.transcript.csv",header=T, sep=",",quote="\"", check.names = T, stringsAsFactors = F, fill = T)
+
+#Creamos una matriz con las sondas correspondientes a TC (Transcription Cluster)
+exp_mat_TC<-exp_mat[grep("TC",rownames(exp_mat)),]
+#Creamos una matriz con las sondas empleadas para el QC (Quality Control)
+exp_mat_QC<-exp_mat[-grep("TC",rownames(exp_mat)),]
+
+#A partir de la tabla de informacion anotada de las sondas (pt) nos quedamos con la informacion que queremos y con los transcritos que se han estudiado en el chip
+transcript_info<-pt[match(rownames(exp_mat_TC),pt$transcript_cluster_id),c(1,3,5,6,8,9,18)]
+
+rownames(transcript)<-transcript[,1]
+transcript<-transcript[,-2]
+
+#Filtramos aquellos transcritos de los que no tenemos informacion de gen conocida, tanto en la matriz de expresion como en la de anotacion
+trans1<-transcript[-(grep("---",transcript$gene_assignment)),]
+exp_mat1<-exp_mat_TC[-(grep("---",transcript$gene_assignment)),]
+
+#Filtramos los que no tienen funcion conocida (locus.type == Unassigned)
+
+exp_mat_TC_1<-exp_mat_TC[(transcript_info$locus.type != "Unassigned"),]
+transcript_info_1<- transcript_info[(transcript_info$locus.type != "Unassigned"),]
+
+exp_mat_TC_cod<-exp_mat_TC[(transcript_info$locus.type == "Coding"),]
+transcript_info_cod<- transcript_info[(transcript_info$locus.type == "Coding"),]
+
+#Filtramos aquellos cuya informacion no entendemos (=_=) (esto vamos a intentar mejorarlo)
+#posAug<-grep("Aug10",trans1$gene_assignment)
+#posENST<-c(grep("ENST",trans1$gene_assignment),grep("NM",trans1$gene_assignment),grep("NR",trans1$gene_assignment))
+
+#rmv<-setdiff(posAug,posENST)
+
+#trans2<-trans1[-rmv,]
+#exp_mat2<-exp_mat1[-rmv,]
+
+#Creamos el archivo de info de las sondas control en exp_mat_QC
+exp_mat_QC$transcript_cluster_id
+
+#Filtramos las sondas cuya expresión es uniformemente baja (por debajo de la media del control negativo que hemos almacenado en exp_mat_QC)
+#sondas normgene_intron calculamos la media y establecemos un valor umbral
+
+#Filtramos las sondas con una expresión uniformemente por debajo de este umbral
+
+#Filtramos aquellas sondas cuya varianza es menor a 1.5 (ya que si no tienen variación suficiente no van a salir diferencias significativas por encima del azar)
+write.table(exp_mat_TC_cod, "exp_mat_TC_cod.txt",col.names = T, row.names = T, sep="\t")
+write.table(transcript_info_cod, "transcript_info_cod.txt",col.names = T, row.names = T, sep="\t")
+
+
+#pl<-readLines("Clariom_D_Human.na36.hg38.transcript.csv", n=1000)
+
+pt_miR<-pt[(pt$locus.type == "Precursor_microRNA"),]
+pt_nc<-pt[(pt$locus.type == "NonCoding"),]
+pt_cod<-pt[(pt$locus.type == "Coding"),]
+pt_mltpl<-pt[(pt$locus.type == "Multiple_Complex"),]
+pt_un<-pt[(pt$locus.type == "Unassigned"),]
+
+mirs<-pt[grep("MIR",pt$gene_assignment),]
+table(mirs$locus.type)
+table(pt$locus.type)
+
